@@ -1,0 +1,61 @@
+services:
+  mysql:
+    image: mysql:5.7
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: powerdns
+    networks:
+      - pdns_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      retries: 3
+      timeout: 5s
+
+  pdns_authoritative:
+    image: powerdns/pdns-auth-master:latest
+    container_name: pdns_authoritative
+    environment:
+      PDNS_GMYSQL_HOST: mysql
+      PDNS_GMYSQL_PORT: 3306
+      PDNS_GMYSQL_USER: root
+      PDNS_GMYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      PDNS_GMYSQL_DBNAME: powerdns
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - pdns_network
+
+  pdns_recursor:
+    image: powerdns/pdns-recursor-53:latest
+    container_name: pdns_recursor
+    networks:
+      - pdns_network
+
+  dnsdist:
+    image: powerdns/dnsdist-20:latest
+    container_name: dnsdist
+    networks:
+      - pdns_network
+
+  pdns_admin:
+    image: pschiffe/pdns-admin:latest
+    container_name: pdns_admin
+    environment:
+      PDNS_ADMIN_SQLA_DB_TYPE: mysql
+      PDNS_ADMIN_SQLA_DB_HOST: mysql
+      PDNS_ADMIN_SQLA_DB_PORT: 3306
+      PDNS_ADMIN_SQLA_DB_USER: root
+      PDNS_ADMIN_SQLA_DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      PDNS_ADMIN_SQLA_DB_NAME: powerdns
+    ports:
+      - "8081:80"
+    depends_on:
+      - pdns_authoritative
+    networks:
+      - pdns_network
+
+networks:
+  pdns_network:
+    driver: bridge
