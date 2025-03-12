@@ -13,6 +13,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: powerdns
+      MYSQL_ROOT_HOST: "%"
     logging:
       driver: loki
       options:
@@ -34,21 +35,25 @@ services:
       retries: 3
 
   pdns_authoritative:
-    image: powerdns/pdns-auth-master:latest
+    image: powerdns/pdns-auth-49:4.9.4
     container_name: pdns_authoritative
     environment:
       DEBUG: true
       BACKEND: gmysql
       PDNS_master: yes
+      # 
       PDNS_api: yes
       PDNS_api_key: ${PDNS_API_KEY}
       PDNS_webserver: yes
       PDNS_webserver_address: 0.0.0.0
+      PDNS_webserver_port: 8081
       PDNS_GMYSQL_HOST: mysql
       PDNS_GMYSQL_PORT: 3306
       PDNS_GMYSQL_USER: root
       PDNS_GMYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       PDNS_GMYSQL_DBNAME: powerdns
+    volumes:
+      - ./configs/pdns.conf:/etc/powerdns/pdns.conf:ro
     logging:
       driver: loki
       options:
@@ -113,6 +118,7 @@ services:
     volumes:
       - ./.data/pdns-admin/static:/opt/powerdns-admin/app/static/
       - ./.data/pdns-admin/uploads:/opt/powerdns-admin/upload/
+      - ./configs/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8080/ || exit 1"]
       timeout: 10s
