@@ -14,6 +14,9 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: powerdns
       MYSQL_ROOT_HOST: "%"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
+    restart: unless-stopped # Restart the container unless manually stopped
     logging:
       driver: loki
       options:
@@ -54,6 +57,9 @@ services:
       PDNS_GMYSQL_DBNAME: powerdns
     volumes:
       - ./configs/pdns.conf:/etc/powerdns/pdns.conf:ro
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
+    restart: unless-stopped # Restart the container unless manually stopped
     logging:
       driver: loki
       options:
@@ -81,6 +87,9 @@ services:
 
   powerdns-admin:
     image: connectitnet/powerdns-admin:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
+    restart: unless-stopped # Restart the container unless manually stopped
     deploy:
       resources:
         limits:
@@ -130,6 +139,9 @@ services:
     depends_on:
       powerdns-admin:
         condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
+    restart: unless-stopped # Restart the container unless manually stopped
     logging:
       driver: loki
       options:
