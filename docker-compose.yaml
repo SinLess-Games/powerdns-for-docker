@@ -1,15 +1,15 @@
 services:
   mysql:
     image: mysql:5.7
-    container_name: mysql
+    container_name: pdns-mysql
     deploy:
       resources:
         limits:
           cpus: "0.50"
-          memory: 128M
+          memory: 500M
         reservations:
           cpus: "0.25"
-          memory: 128M
+          memory: 500M
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: powerdns
@@ -94,10 +94,10 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 128M
+          memory: 500M
         reservations:
           cpus: "0.25"
-          memory: 128M
+          memory: 500M
     container_name: pdns_admin
     environment:
       DBBACKEND: mysql
