@@ -1,7 +1,32 @@
+x-common-config: &common-config
+  environment:
+    MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    MYSQL_DATABASE: powerdns
+    MYSQL_USER: powerdns
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    MYSQL_ROOT_HOST: "%"
+    PDNS_API_KEY: ${PDNS_API_KEY}
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+  networks:
+    - pdns_network
+  logging:
+    driver: loki
+    options:
+      loki-external-labels: "container_name={{.Name}}"
+      loki-url: "http://192.168.1.3:3100/loki/api/v1/push"
+      loki-retries: 2
+      loki-max-backoff: 800ms
+      loki-timeout: 1s
+      keep-file: "true"
+      mode: "non-blocking"
+
 services:
-  mysql:
+  pdns_mysql:
+    <<: *common-config
     image: mysql:5.7
-    container_name: pdns-mysql
+    container_name: pdns_mysql
+    command: --explicit_defaults_for_timestamp
     deploy:
       resources:
         limits:
@@ -10,86 +35,115 @@ services:
         reservations:
           cpus: "0.25"
           memory: 500M
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: powerdns
-      MYSQL_ROOT_HOST: "%"
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
-    restart: unless-stopped # Restart the container unless manually stopped
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://192.168.1.3:3100/loki/api/v1/push"
-        loki-external-labels: "container_name=pdns-mysql" # Change this to your the name of your container
-        loki-retries: 2
-        loki-max-backoff: 800ms
-        loki-timeout: 1s
-        keep-file: "true"
-        mode: "non-blocking"
+    restart: always
     volumes:
       - ./.data/mysql:/var/lib/mysql
-    networks:
-      - pdns_network
+      # - ./configs/mysql.conf:/etc/mysql/conf.d/mysql.cnf
+      - ./.data/certs/mysql:/etc/mysql/certs
+      - ./.data/logs/mysql:/var/log/mysql
+      # Initialize database with SQL script
+      - ./configs/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      pdns_network:
+        ipv4_address: 155.255.55.2
 
   pdns_authoritative:
+    <<: *common-config
     image: powerdns/pdns-auth-49:4.9.4
     container_name: pdns_authoritative
     environment:
-      DEBUG: true
-      BACKEND: gmysql
-      PDNS_master: yes
-      # 
-      PDNS_api: yes
-      PDNS_api_key: ${PDNS_API_KEY}
-      PDNS_webserver: yes
-      PDNS_webserver_address: 0.0.0.0
+      # PowerDNS config as env vars
+      PDNS_webserver: "yes"
+      PDNS_webserver_address: "0.0.0.0"
+      PDNS_webserver_allow_from: ""
       PDNS_webserver_port: 8081
-      PDNS_GMYSQL_HOST: mysql
-      PDNS_GMYSQL_PORT: 3306
-      PDNS_GMYSQL_USER: root
-      PDNS_GMYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      PDNS_GMYSQL_DBNAME: powerdns
-    volumes:
-      - ./configs/pdns.conf:/etc/powerdns/pdns.conf:ro
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
-    restart: unless-stopped # Restart the container unless manually stopped
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://192.168.1.3:3100/loki/api/v1/push"
-        loki-external-labels: "container_name=pdns-authoritative" # Change this to your the name of your container
-        loki-retries: 2
-        loki-max-backoff: 800ms
-        loki-timeout: 1s
-        keep-file: "true"
-        mode: "non-blocking"
+      PDNS_api: "yes"
+      PDNS_api_key: "${PDNS_API_KEY}"
+      PDNS_webserver_hash_plaintext_credentials: "yes"
+      PDNS_webserver_loglevel: "detailed"
+      PDNS_launch: "gmysql,geoip"
+      PDNS_default_soa_edit_signed: "INCEPTION-INCREMENT"
+      PDNS_log_dns_queries: "no"
+      PDNS_loglevel: 6
+      PDNS_local_address: "0.0.0.0"
+      PDNS_local_port: 53
+      PDNS_enable_lua_records: "yes"
+      PDNS_receiver_threads: 2
+      PDNS_distributor_threads: 2
+      # MySQL backend config
+      PDNS_gmysql_host: "pdns_mysql"
+      PDNS_gmysql_port: 3306
+      PDNS_gmysql_user: "root"
+      PDNS_gmysql_password: "${MYSQL_ROOT_PASSWORD}"
+      PDNS_gmysql_dbname: "powerdns"
+    # volumes:
+    #   - ./configs/pdns.conf:/etc/powerdns/pdns.conf:ro
+    restart: always
     depends_on:
-      mysql:
+      pdns_mysql:
         condition: service_healthy
-    networks:
-      - pdns_network
+      pdns_mysql_admin:
+        condition: service_healthy
     ports:
       - "192.168.1.3:53:53/tcp"
       - "192.168.1.3:53:53/udp"
-      - "8081:8081"   # API and webserver port
+      - "8081:8081"
     healthcheck:
       test: ["CMD", "pdns_control", "rping"]
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      pdns_network:
+        ipv4_address: 155.255.55.3
+    links:
+      - pdns_mysql
+
+  pdns_recursor:
+    <<: *common-config
+    image: powerdns/pdns-recursor-52:5.2.2
+    container_name: pdns_recursor
+    environment:
+      PDNS_api: yes
+      PDNS_api_key: ${PDNS_API_KEY}
+      PDNS_webserver: yes
+      PDNS_webserver_address: 0.0.0.0
+      PDNS_webserver_port: 8083
+      PDNS_allow_from: 192.168.1.0/24,192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.40.0/24
+      # Forward zones to authoritative server using container IP
+      PDNS_forward_zones_recurse: "local=155.255.55.3"
+      PDNS_forward_zones: ".=1.1.1.1;8.8.8.8"
+      PDNS_dnssec: validate
+      PDNS_disable_ipv6: yes
+      PDNS_local_address: 0.0.0.0
+      PDNS_local_port: 53
+      PDNS_loglevel: 6
+    ports:
+      - "192.168.1.3:54:53/tcp"
+      - "192.168.1.3:54:53/udp"
+    restart: always
+    depends_on:
+      pdns_authoritative:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pdns_recursor", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      pdns_network:
+        ipv4_address: 155.255.55.4
 
   powerdns-admin:
+    <<: *common-config
     image: connectitnet/powerdns-admin:latest
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
-    restart: unless-stopped # Restart the container unless manually stopped
+    container_name: pdns_admin
+    restart: always
     deploy:
       resources:
         limits:
@@ -98,32 +152,19 @@ services:
         reservations:
           cpus: "0.25"
           memory: 500M
-    container_name: pdns_admin
     environment:
       DBBACKEND: mysql
-      # API key
-      PDNS_API_KEY: ${PDNS_API_KEY}
       PDNS_ADMIN_SQLA_DB_TYPE: mysql
-      PDNS_ADMIN_SQLA_DB_HOST: mysql
+      PDNS_ADMIN_SQLA_DB_HOST: 155.255.55.2
       PDNS_ADMIN_SQLA_DB_PORT: 3306
       PDNS_ADMIN_SQLA_DB_USER: root
       PDNS_ADMIN_SQLA_DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       PDNS_ADMIN_SQLA_DB_NAME: powerdns
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://192.168.1.3:3100/loki/api/v1/push"
-        loki-external-labels: "container_name=pdns-admin" # Change this to your the name of your container
-        loki-retries: 2
-        loki-max-backoff: 800ms
-        loki-timeout: 1s
-        keep-file: "true"
-        mode: "non-blocking"
     depends_on:
       pdns_authoritative:
         condition: service_healthy
-    networks:
-      - pdns_network
+      pdns_recursor:
+        condition: service_healthy
     volumes:
       - ./.data/pdns-admin/static:/opt/powerdns-admin/app/static/
       - ./.data/pdns-admin/uploads:/opt/powerdns-admin/upload/
@@ -132,35 +173,70 @@ services:
       test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8080/ || exit 1"]
       timeout: 10s
       retries: 5
+    networks:
+      pdns_network:
+        ipv4_address: 155.255.55.5
+    ports:
+      - "9191:8080"
+    links:
+      - pdns_mysql
 
   nginx:
+    <<: *common-config
     image: nginx:latest
     container_name: pdns_nginx
     depends_on:
       powerdns-admin:
         condition: service_healthy
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true" # Enable automatic updates with Watchtower
-    restart: unless-stopped # Restart the container unless manually stopped
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://192.168.1.3:3100/loki/api/v1/push"
-        loki-external-labels: "container_name=pdns-nginx" # Change this to your the name of your container
-        loki-retries: 2
-        loki-max-backoff: 800ms
-        loki-timeout: 1s
-        keep-file: "true"
-        mode: "non-blocking"
     networks:
-      - pdns_network
+      pdns_network:
+        ipv4_address: 155.255.55.6
+      frontend:
     ports:
-      - "8082:8000"   # Expose Nginx on port 8082 externally (adjust as needed)
+      - "8082:8000"
     volumes:
       - ./configs/nginx-pdns-admin.conf:/etc/nginx/nginx.conf:ro
       - ./.data/pdns-admin/static:/opt/powerdns-admin/app/static/:ro
       - ./.data/pdns-admin/uploads:/opt/powerdns-admin/upload/:ro
 
+  pdns_mysql_admin:
+    <<: *common-config
+    image: phpmyadmin:latest
+    container_name: pdns_mysql_admin
+    environment:
+      PMA_HOST: 155.255.55.2
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      PMA_ARBITRARY: "1"
+      # FQDN for accessing phpMyAdmin
+      PMA_HOST_FQDN: pdns_mysql_admin
+      # Server Name
+      PMA_SERVER_NAME: PowerDNS MySQL Admin
+    ports:
+      - "8088:80"
+    restart: unless-stopped
+    depends_on:
+      pdns_mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      pdns_network:
+        ipv4_address: 155.255.55.7
+      frontend:
+    links:
+      - pdns_mysql
+
 networks:
   pdns_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 155.255.55.0/28
+          gateway: 155.255.55.1
+  frontend:
+    external: true
